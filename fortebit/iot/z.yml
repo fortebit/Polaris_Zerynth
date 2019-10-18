@@ -1,0 +1,14 @@
+---
+description: library for Fortebit IoT services
+fullname: lib.fortebit.iot
+info:
+    chip_manufacturer: fortebit
+    chip_name: '-'
+    name: Zerynth Fortebit IoT Library
+    type: Utility
+keywords:
+- fortebit
+- iot
+- cloud
+title: Fortebit IoT Library
+...
