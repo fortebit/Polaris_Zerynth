@@ -1,0 +1,13 @@
+# This file contains advanced configuration options for a Zerynth project
+# 
+# Under the section "config" a list of options can be specified and activated;
+# such options change the way Python and C modules are compiled.
+# A detailed guide can be found here: 
+#
+#
+#
+
+config: {}
+
+
+

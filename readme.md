@@ -1,9 +1,7 @@
 Polaris Zerynth
 ===============
 
-Zerynth repository for the Polaris IoT platform.
-
-Available soon... stay tuned
+Default application firmware for Polaris boards "Powered by Zerynth"
 
 ## Polaris
 
