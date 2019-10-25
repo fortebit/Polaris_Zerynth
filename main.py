@@ -24,11 +24,12 @@ import utils
 sleep(1000)
 
 # CONFIG
+poll_time = 100                     # poll inputs at twice the specified period in ms
 gps_period = 10000                  # gps lat,lon and speed telemetry period in ms
 update_period = 6 * gps_period      # other telemetry data period in ms
 no_ignition_period = 300000         # no ignition telemetry data period in ms
 
-fw_version = "1.07"
+fw_version = "1.08"
 
 # POLARIS INIT
 try:
@@ -162,6 +163,7 @@ try:
     from fortebit.polaris import cloud
     # get access token
     device_token = cloud.getAccessToken(minfo[0], mcu.uid())
+    # NOTE! Do not disclose security token in production builds
     print("Access Token:", device_token)
 
     print("Connecting to Fortebit Cloud...")
@@ -173,21 +175,22 @@ try:
     #       uncomment the following line!
     #ctx = None
     
-    #-if TARGET == polaris_2g
-    ctx = None # SSL/TLS currently not supported
-    #-endif
-    
     from fortebit.iot import iot
     from fortebit.iot import mqtt_client
     # let's create a device passing the token and the type of client
     device = iot.Device(device_token, mqtt_client.MqttClient, ctx)  # use ctx for TLS
 
     # connect the device
-    sfw.kick()
-    if not device.connect():
-        print("Failed connection to cloud, reset")
-        sleep(5000)
-        mcu.reset()
+    for _ in range(0, 5):
+        sfw.kick()
+        try:
+            if device.connect():
+                break
+        except Exception as e:
+            print("Retrying...", e)
+        sleep(3000 * (_ + 1))
+    else:
+        raise TimeoutError
 
     print("Device is connected")
     polaris.ledGreenOn()
@@ -201,7 +204,7 @@ try:
     if not cloud.isRegistered(device, email):
         sfw.kick()
         print("Device is not registered, register device")
-        while not cloud.register(device, email, minfo[0], ctx):
+        while not cloud.register(device, email):
             sfw.kick()
             sleep(1000)
         sfw.kick()
@@ -221,8 +224,8 @@ try:
     sfw.kick()
 
 except Exception as e:
-    print("Failed fortebit cloud with", e)
-    sleep(5000)
+    print("Failed access to Fortebit cloud", e)
+    sleep(500)
     mcu.reset()
 
 # TELEMETRY LOOP
@@ -236,17 +239,16 @@ try:
     connected = True
     ignition = None
     sos = None
+    telemetry = {}
 
     while True:
         # allow other threads to run while waiting
-        sleep(100)
+        sleep(poll_time*2)
         sfw.kick()
         now_time = timers.now()
 
         if utils.check_terminal(s):
             utils.do_terminal(s)
-
-        telemetry = {}
 
         # read inputs
         old_ign = ignition
@@ -269,12 +271,12 @@ try:
         if not extra_send:
             if ignition == 0:
                 # sleep as indicated by rate for no ignition
-                if now_time - last_time < no_ignition_period:
+                if now_time - last_time < no_ignition_period - poll_time:
                     continue
                 extra_send = True
             else:
                 # sleep as indicated by rate
-                if now_time - last_time < gps_period:
+                if now_time - last_time < gps_period - poll_time:
                     continue
 
         connected = device.is_connected()
@@ -330,8 +332,9 @@ try:
         print("Publishing:", counter, ts, telemetry)
         sfw.kick()
         device.publish_telemetry(telemetry, ts)
+        telemetry = {}
 
 except Exception as e:
-    print("Failed telemetry loop with", e)
+    print("Failed telemetry loop", e)
     sleep(500)
     mcu.reset()
