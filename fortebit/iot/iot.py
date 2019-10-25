@@ -56,21 +56,10 @@ The Device class
         """
 .. method:: connect()
 
-        Setup a connection to the Fortebit Cloud. It can raise an exception in case of error.
+        Setup a connection to the Fortebit Cloud. Return *True* if successful.
 
         """
-        if self.client.connect():
-            return True
-        t = 3000
-        while (retry > 0):
-            sleep(t)
-            if self.client.connect():
-                return True
-            # increase (double) the delay between attempts (up to 1 minute)
-            if t < 30000:
-                t *= 2
-            retry -= 1
-        return False
+        return self.client.connect()
 
     def is_connected(self):
         """
@@ -85,7 +74,7 @@ The Device class
         """
 .. method:: run()
 
-        Starts the device by executing the underlying client. It can start a new thread depending on the type of client (Mqtt vs Http)
+        Starts the device by executing the underlying client loop.
 
         """
         self.client.loop()
@@ -129,3 +118,14 @@ The Device class
         Return a boolean, *False* if the message cannot be sent.
         """
         return self.client.send_rpc_reply(id, result)
+
+    def do_rpc_request(self, method, params=None, timeout=15000):
+        """
+.. method:: do_rpc_request(method, params, timeout)
+
+        Perform an RPC request with name :samp:`method` and arguments :samp:`params`, waiting for
+        a reply maximum :samp:`timeout` milliseconds (only with MqttClient).
+
+        Return the result of the RPC (dictionary), *None* in case of errors.
+        """
+        return self.client.do_rpc_request(method, params, timeout)

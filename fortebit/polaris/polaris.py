@@ -347,7 +347,7 @@ def GSM():
     """
     #-if TARGET == polaris_3g
     from quectel.ug96 import ug96
-    ug96.init(gsm.SERIAL, _PIN_NC, _PIN_NC, gsm.PIN_POWER, _PIN_NC, gsm.PIN_STATUS, gsm.PIN_KILL, 0)
+    ug96.init(gsm.SERIAL, _PIN_NC, _PIN_NC, gsm.PIN_POWER, gsm.PIN_KILL, gsm.PIN_STATUS, 1, 1, 0)
     return ug96
     #-else 
     ##-if TARGET == polaris_2g
@@ -357,7 +357,7 @@ def GSM():
     ##-else
     ###-if TARGET == polaris_nbiot
     from quectel.bg96 import bg96
-    bg96.init(gsm.SERIAL, _PIN_NC, _PIN_NC, gsm.PIN_POWER, gsm.PIN_KILL, gsm.PIN_STATUS, 0)
+    bg96.init(gsm.SERIAL, _PIN_NC, _PIN_NC, gsm.PIN_POWER, gsm.PIN_KILL, gsm.PIN_STATUS, 1, 1, 0)
     bg96.gnss_init(use_uart=1)
     return bg96
     ###-else

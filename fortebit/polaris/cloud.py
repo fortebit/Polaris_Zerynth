@@ -63,29 +63,46 @@ def isRegistered(device, email):
     return False
 
 
-def register(device, email, imei, ssl_ctx=None):
+def register(device, email):
     """
-.. function:: register(device, email, imei, ssl_ctx)
+.. function:: register(device, email)
 
-    Generates the board's own access token for Fortebit IoT cloud services.
+    Perform device registration to Fortebit IoT cloud services.
 
     :param device: a connected instance of :any:`fortebit.iot.Device`
     :param email: the device owner's email address
-    :param imei: the modem IMEI number (as a 15 characters string)
-    :param ssl_ctx: an optional SSL/TLS context (use HTTPS if present)
     """
-    if ssl_ctx:
-        url = "https://"
-    else:
-        url = "http://"
-    url += device.endpoint + "/script-polaris/register"
-    obj = {"email": email, "token": device.device_token, "imei": imei}
-    print("Register device", email, device.device_token, url, obj)
-    try:
-        res = requests.get(url, params=obj, ctx=ssl_ctx)
-        if res.status == 200:
-            return True
-        print("Registration error", res.status)
-    except Exception as e:
-        print(e)
+    obj = {"email": email, "token": device.device_token}
+    print("Register device", obj)
+    obj = device.do_rpc_request("register", obj)
+    #print(obj)
+    if obj and "reply" in obj and obj["reply"] == "OK":
+        return True
     return False
+
+# def register(device, email, imei, ssl_ctx=None):
+#     """
+# .. function:: register(device, email, imei, ssl_ctx)
+
+#     Perform device registration to Fortebit IoT cloud services.
+
+#     :param device: a connected instance of :any:`fortebit.iot.Device`
+#     :param email: the device owner's email address
+#     :param imei: the modem IMEI number (as a 15 characters string)
+#     :param ssl_ctx: an optional SSL/TLS context (use HTTPS if present)
+#     """
+#     if ssl_ctx:
+#         url = "https://"
+#     else:
+#         url = "http://"
+#     url += device.endpoint + "/script-polaris/register"
+#     obj = {"email": email, "token": device.device_token, "imei": imei}
+#     print("Register device", email, device.device_token, url, obj)
+#     try:
+#         res = requests.get(url, params=obj, ctx=ssl_ctx)
+#         if res.status == 200:
+#             return True
+#         print("Registration error", res.status)
+#     except Exception as e:
+#         print(e)
+#     return False

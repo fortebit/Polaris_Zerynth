@@ -131,7 +131,7 @@ class HttpClient():
             self.connected = False
             return None
 
-    def publish_rpc_reply(self, id, result):
+    def send_rpc_reply(self, id, result):
         try:
             res = requests.post(self._rpc_url(id), json=result, ctx=self.ctx)
         except Exception as e:
@@ -140,3 +140,16 @@ class HttpClient():
         if res.status != 200:
             return False
         return True
+
+    def do_rpc_request(self, method, params=None, timeout=20000):
+        print_d("rpc request:", method, params)
+        try:
+            obj = { "method":method, "params":params }
+            res = requests.post(self._rpc_url(), json=obj, ctx=self.ctx)
+            if res.status != 200:
+                return None
+            obj = json.loads(res.content)
+        except Exception as e:
+            print_d(e)
+            return None
+        return obj
