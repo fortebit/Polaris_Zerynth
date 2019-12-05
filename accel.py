@@ -1,10 +1,10 @@
 import threading
 import math
-import spi
 from fortebit.polaris import polaris
 
 _lock = threading.Lock()
 _accel = polaris.Accelerometer()
+_thread = None
 
 _ACCEL_LP_COEF = 0.25
 _ACCEL_UPDATE = 10
@@ -24,7 +24,7 @@ def _update():
         _x = _ACCEL_LP_COEF * a[0] + (1-_ACCEL_LP_COEF) * _x
         _y = _ACCEL_LP_COEF * a[1] + (1-_ACCEL_LP_COEF) * _y
         _z = _ACCEL_LP_COEF * a[2] + (1-_ACCEL_LP_COEF) * _z
-        #print("inc: ",_x,_y,_z,a,len(accel))
+        #print("inc: ",_x,_y,_z,a)
         # update peak diff
         d_x = a[0] - _x
         d_y = a[1] - _y
@@ -80,4 +80,12 @@ def get_sigma():
     return sigma
     
 def start():
-    thread(_run,"Accel Task")
+    _lock.acquire()
+    try:
+        if _thread is None:
+            _thread = thread(_run,"Accel Task")
+        global _x,_y,_z
+        (_x,_y,_z) = _accel.acceleration()
+    except Exception as e:
+        pass
+    _lock.release()
