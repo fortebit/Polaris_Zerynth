@@ -1,53 +1,23 @@
-import json
 import mcu
 import sfw
+import pwr
 import timers
+import streams
+import json
 from fortebit.polaris import polaris
+import accel
+
+modem = None
+gnss = None
+client = None
+check_sms = False
 
 has_qspi = True
-
 
 def decimal(n, v):
     v = float(v)
     s = "%%.%df" % n
-    s = s % v
-    if len(str(v)) < len(s):
-        return s[:-1] + '0'
-    return s
-
-gsm = ("@\t$\t\t\t\t\t\t\t\n\t\t\r\t\t\t_\t\t\t\t\t\t\t\t\t\x1b\t\t\t\t !\"# %&'()*+,-./0123456789:;<=>?"
-       " ABCDEFGHIJKLMNOPQRSTUVWXYZ    ` abcdefghijklmnopqrstuvwxyz     ")
-ext = ("````````````````````^```````````````````{}`````\\````````````[~]`"
-       "|```````````````````````````````````` ``````````````````````````")
-
-
-def gsm_encode(plaintext):
-    result = []
-    for c in plaintext:
-        idx = gsm.find(c)
-        if idx != -1:
-            result.append(chr(idx))
-            continue
-        idx = ext.find(c)
-        if idx != -1:
-            result.append(chr(27) + chr(idx))
-    return ''.join(result)
-
-
-def gsm_decode(res):
-    result = []
-    i = 0
-    while i < len(res):
-        c = res[i]
-        i += 1
-        if c == chr(27):
-            c = res[i]
-            i += 1
-            result.append(ext[ord(c)])
-        else:
-            result.append(gsm[ord(c)])
-    return ''.join(result)
-
+    return s % v
 
 # entry sequence is '+++' within 1 second
 start_check = 0
@@ -95,6 +65,44 @@ def do_terminal(s):
                 settings["name"] = name
                 saveSettings(settings)
                 mcu.reset()
+        elif cmd == 'modem':
+            do_modem_passthru(s)
+            break
+        elif cmd == 'gnss':
+            global gnss
+            gnss.debug = not gnss.debug
+            print("gnss debug =", gnss.debug)
+            break
+        elif cmd == 'mqtt':
+            global client
+            if client is not None:
+                client.debug = not client.debug
+                print("mqtt debug =", client.debug)
+                break
+
+
+def do_modem_passthru(s):
+    print("Modem passthrough...[^ to exit]")
+    modem.bypass(1)
+    ms = streams.serial(polaris.gsm.SERIAL,baud=115200,set_default=False)
+    ms.write('ATE1\r')
+    while True:
+        sfw.kick()
+        # modem to stream
+        n = ms.available()
+        if n > 0:
+            s.write(ms.read(n))
+        # stream to modem
+        n = s.available()
+        if n > 0:
+            b = s.read(n)
+            if n == 1 and b[0] == __ORD('^'):
+                break
+            ms.write(b)
+        else:
+            sleep(1)
+    ms.write('ATE0\r')
+    modem.bypass(0)
 
 
 def input_line(s):
@@ -170,62 +178,143 @@ def eraseSettings():
     my_flash.erase_block(0)
 
 
-def readSMS(gsm):
+def read_and_parse_sms():
+    mcu_reset = False
+    sms = modem.list_sms(False,10,0)
+    if sms and len(sms) > 0:
+        for msg in sms:
+            print("Index:", msg[3])
+            print("Text:", msg[0])
+            print("From:", msg[1])
+            print("Time:", msg[2])
+            modem.delete_sms(msg[3])
+            text = msg[0].split(",")
+            ret = ""
+            for line in text:
+                line = line.split("=")
+                line[0] = line[0].lower().strip()
+                if line[0] == "erase":
+                    print('erase flash')
+                    eraseSettings()
+                    ret += "erase done"
+                    mcu_reset = True
+                if line[0] == "apn" and len(line) > 1:
+                    line[1] = line[1].replace(" ", "")
+                    apn = line[1]
+                    print("APN", apn)
+                    settings = readSettings()
+                    settings["apn"] = apn
+                    saveSettings(settings)
+                    ret += "apn " + apn + " saved,"
+                    mcu_reset = True
+                if line[0] == "email" and len(line) > 1:
+                    line[1] = line[1].replace(" ", "")
+                    email = line[1]
+                    print("email", email)
+                    settings = readSettings()
+                    settings["email"] = email
+                    saveSettings(settings)
+                    ret += "email " + email + " saved,"
+                    mcu_reset = True
+                if line[0] == "name" and len(line) > 1:
+                    name = line[1].strip()
+                    print("name", name)
+                    settings = readSettings()
+                    settings["name"] = name
+                    saveSettings(settings)
+                    ret += "name changed " + name + ","
+                    mcu_reset = True
+            if len(ret) > 0:
+                if ret[-1] == ",":
+                    ret = ret[0:-1]
+                modem.send_sms(msg[1], ret)
+    return mcu_reset
+
+
+charging = False
+
+def update_charger():
+    global charging
+    if polaris.isBatteryBackup():
+        charging = False
+    elif charging:
+        if accel.get_temperature() < 4 or accel.get_temperature() > 45:
+            print("Exceeding battery temperature range!")
+            charging = False
+        if not charging:
+            print("Stop battery charging...")
+    else:
+        if accel.get_temperature() >= 6 and accel.get_temperature() <= 43:
+            print("Good battery temperature range!")
+            charging = True
+        if charging:
+            print("Start battery charging...")
+    
+    polaris.setBatteryCharger(charging)
+
+
+def is_powersupply_toolow():
+    if polaris.isBatteryBackup():
+        volt = polaris.readBattVoltage()
+        if volt < 3.45:
+            print("Backup battery:", volt)
+            return True
+    else:
+        volt = polaris.readMainVoltage()
+        if volt < 11.2:
+            print("Main battery:", volt)
+            return True
+    return False
+
+
+def is_powersupply_enough():
+    if polaris.isBatteryBackup():
+        volt = polaris.readBattVoltage()
+        if volt >= 3.6:
+            return True
+    else:
+        volt = polaris.readMainVoltage()
+        if volt >= 11.5:
+            return True
+    return False
+
+
+def start():
+    # only proceed if power supply input level is enough
+    print("Checking power supply level...")
+    while not is_powersupply_enough():
+        polaris.ledRedOff()
+        # pwr.go_to_sleep(450, pwr.PWR_STOP)
+        sleep(450)
+        polaris.ledRedOn()
+        sleep(50)
+    print("Starting utility thread...")
+    thread(run)
+    
+def run():
+    sms_timer = 0
     while True:
-        sms = gsm.list_sms()
         mcu_reset = False
-        if sms and len(sms) > 0:
-            mcu_reset = False
-            for msg in sms:
-                print("Index:", msg[3])
-                print("Text:", msg[0])
-                print("From:", msg[1])
-                print("Time:", msg[2])
-                gsm.delete_sms(msg[3])
-                text = gsm_decode(msg[0])
-                text = text.split(",")
-                ret = ""
-                for line in text:
-                    line = line.split("=")
-                    line[0] = line[0].lower().strip()
-                    if line[0] == "erase":
-                        print('erase flash')
-                        eraseSettings()
-                        ret += "erase done"
-                        mcu_reset = True
-                    if line[0] == "apn" and len(line) > 1:
-                        line[1] = line[1].replace(" ", "")
-                        apn = line[1]
-                        print("APN", apn)
-                        settings = readSettings()
-                        settings["apn"] = apn
-                        saveSettings(settings)
-                        ret += "apn " + apn + " saved,"
-                        mcu_reset = True
-                    if line[0] == "email" and len(line) > 1:
-                        line[1] = line[1].replace(" ", "")
-                        email = line[1]
-                        print("email", email)
-                        settings = readSettings()
-                        settings["email"] = email
-                        saveSettings(settings)
-                        ret += "email " + email + " saved,"
-                        mcu_reset = True
-                    if line[0] == "name" and len(line) > 1:
-                        name = line[1].strip()
-                        print("name", name)
-                        settings = readSettings()
-                        settings["name"] = name
-                        saveSettings(settings)
-                        ret += "name changed " + name + ","
-                        mcu_reset = True
-                if len(ret) > 0:
-                    if ret[-1] == ",":
-                        ret = ret[0:-1]
-                    gsm.send_sms(msg[1], gsm_encode(ret))
-        sleep(5000)
+        sleep(1000)
+        sms_timer += 1
+        # parse SMS commands
+        try:
+            if check_sms and modem and (sms_timer >= 15 or modem.pending_sms() > 0):
+                sms_timer = 0
+                mcu_reset = read_and_parse_sms()
+        except Exception as e:
+            print("utils SMS failure", e)
+        # control battery charger and input level
+        if is_powersupply_toolow():
+            print("Power supply too low!")
+            mcu_reset = True
+        else:
+            update_charger()
+        # handle reset
         if mcu_reset:
-            print("mcu reset")
+            if modem:
+                modem.shutdown()
+            print("utils MCU reset")
             mcu.reset()
 
 

@@ -29,43 +29,50 @@ gps_period = 10000                  # gps lat,lon and speed telemetry period in 
 update_period = 6 * gps_period      # other telemetry data period in ms
 no_ignition_period = 300000         # no ignition telemetry data period in ms
 
-fw_version = "1.08"
+fw_version = "1.10"
 
 # POLARIS INIT
 try:
     print("Polaris default app")
     polaris.init()
+    
+    print("MCU UID:", [hex(b) for b in mcu.uid()])
+    print("VM info:", vm.info())
+    print("FW version:", fw_version)
+    print("Watchdog was triggered:", sfw.watchdog_triggered())
+    
     polaris.ledRedOn()
     polaris.ledGreenOff()
-    print("Watchdog was triggered:", sfw.watchdog_triggered())
-    if polaris.isBatteryBackup():
-        polaris.setBatteryCharger(False)
-    else:
-        print("Start battery charging")
-        polaris.setBatteryCharger(True)
+
 except Exception as e:
     print("Failed polaris init with", e)
     sleep(500)
     mcu.reset()
 
-print("MCU UID:", [hex(b) for b in mcu.uid()])
-print("VM info:", vm.info())
-print("FW version:", fw_version)
-
 
 # INIT HW
 
 try:
-    print("Initializing Accelerometer...")
-    import accel
-    accel.start()
-
+    print("Initializing Modem...")
+    modem = polaris.GSM()
     print("Initializing GNSS...")
     gnss = polaris.GNSS()
-    gnss.set_rate(1000)
+    # verify preconditions and start utility thread
+    utils.start()
 
-    print("Initializing GSM...")
-    modem = polaris.GSM()
+    print("Starting Accelerometer...")
+    import accel
+    accel.start()
+    print("Starting GNSS...")
+    gnss.start()
+    gnss.set_rate(2000)
+    
+    print("Starting Modem...")
+    modem.startup()
+    
+    # enable modem/gnss utilities
+    utils.modem = modem
+    utils.gnss = gnss
 
     sfw.watchdog(0, 30000)
     sfw.kick()
@@ -74,8 +81,9 @@ try:
 
     minfo = gsm.mobile_info()
     print("Modem:", minfo)
-    print("Starting SMS thread")
-    thread(utils.readSMS, gsm)
+    
+    # enable SMS checking
+    utils.check_sms = True
 except Exception as e:
     print("Failed init hw with", e)
     sleep(500)
@@ -135,8 +143,22 @@ except Exception as e:
 
 # GSM ATTACH
 try:
-    for _ in range(0, 5):
+    print("Waiting for network...",end='')
+    for _ in range(150):
         sfw.kick()
+        ninfo = gsm.network_info()
+        if ninfo[6]:
+            break
+        sleep(1000)
+        if (_ % 10) == 9:
+            print('.',end='')
+    else:
+        raise TimeoutError
+    print("ok!")
+    print("Attached to network:", ninfo)
+
+    print("Activating data connection...")
+    for _ in range(3):
         try:
             gsm.attach(apn)
             break
@@ -149,11 +171,10 @@ try:
             pass
     else:
         raise TimeoutError
-    ninfo = gsm.network_info()
     linfo = gsm.link_info()
-    print("Attached to network:", ninfo, linfo)
+    print("Connection parameters:", linfo)
 except Exception as e:
-    print("Failed to attach network", e)
+    print("Network failure", e)
     sleep(500)
     mcu.reset()
 
@@ -177,8 +198,12 @@ try:
     
     from fortebit.iot import iot
     from fortebit.iot import mqtt_client
+    # from fortebit.iot import http_client
     # let's create a device passing the token and the type of client
     device = iot.Device(device_token, mqtt_client.MqttClient, ctx)  # use ctx for TLS
+    # device = iot.Device(device_token, http_client.HttpClient, ctx)  # use ctx for TLS
+    
+    utils.client = device.client
 
     # connect the device
     for _ in range(0, 5):
@@ -240,6 +265,7 @@ try:
     ignition = None
     sos = None
     telemetry = {}
+    disconn_time = None
 
     while True:
         # allow other threads to run while waiting
@@ -256,6 +282,19 @@ try:
         old_sos = sos
         sos = polaris.getEmergencyStatus()
         extra_send = False
+
+        if connected and not device.is_connected():
+            if disconn_time is None:
+                disconn_time = now_time + 60000 # add some time to recover
+            connected = False
+        elif not connected and device.is_connected():
+            connected = True
+            disconn_time = None
+
+        if not connected and disconn_time:
+            if now_time > disconn_time:
+                raise TimeoutError
+                pass
 
         # led waiting status
         utils.status_led(False, ignition, connected)
@@ -278,8 +317,6 @@ try:
                 # sleep as indicated by rate
                 if now_time - last_time < gps_period - poll_time:
                     continue
-
-        connected = device.is_connected()
 
         ts = modem.rtc()
         #print("MODEM RTC =", ts)
@@ -331,8 +368,11 @@ try:
 
         print("Publishing:", counter, ts, telemetry)
         sfw.kick()
-        device.publish_telemetry(telemetry, ts)
+        ok = device.publish_telemetry(telemetry, ts)
         telemetry = {}
+        
+        if not ok:
+            print("Publishing failed") # TODO: retry or store to qspiflash and resend later
 
 except Exception as e:
     print("Failed telemetry loop", e)
