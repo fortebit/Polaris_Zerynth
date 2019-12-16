@@ -3,6 +3,8 @@
 # Created at 2019-07-26 11:34:26.282569
 
 from fortebit.polaris import polaris
+from fortebit.polaris import modem
+from fortebit.polaris import gnss
 import vm
 import sfw
 vm.set_option(vm.VM_OPT_RESET_ON_EXCEPTION, 1)
@@ -29,7 +31,7 @@ gps_period = 10000                  # gps lat,lon and speed telemetry period in 
 update_period = 6 * gps_period      # other telemetry data period in ms
 no_ignition_period = 300000         # no ignition telemetry data period in ms
 
-fw_version = "1.10"
+fw_version = "1.11"
 
 # POLARIS INIT
 try:
@@ -54,9 +56,9 @@ except Exception as e:
 
 try:
     print("Initializing Modem...")
-    modem = polaris.GSM()
+    modem = modem.init()
     print("Initializing GNSS...")
-    gnss = polaris.GNSS()
+    gnss = gnss.init()
     # verify preconditions and start utility thread
     utils.start()
 
@@ -66,7 +68,7 @@ try:
     print("Starting GNSS...")
     gnss.start()
     gnss.set_rate(2000)
-    
+
     print("Starting Modem...")
     modem.startup()
     
@@ -194,7 +196,7 @@ try:
     ctx = ssl.create_ssl_context(cacert=cacert, options=ssl.CERT_REQUIRED | ssl.SERVER_AUTH)
     # NOTE: if the underlying SSL driver does not support certificate validation
     #       uncomment the following line!
-    #ctx = None
+    # ctx = None
     
     from fortebit.iot import iot
     from fortebit.iot import mqtt_client
@@ -206,16 +208,18 @@ try:
     utils.client = device.client
 
     # connect the device
-    for _ in range(0, 5):
-        sfw.kick()
-        try:
-            if device.connect():
-                break
-        except Exception as e:
-            print("Retrying...", e)
-        sleep(3000 * (_ + 1))
-    else:
-        raise TimeoutError
+    if not device.connect():
+        for _ in range(5):
+            sfw.kick()
+            try:
+                sleep(3000 * (_ + 1))
+                print("Retrying...")
+                if device.connect():
+                    break
+            except Exception as e:
+                print("Failed connect...", e)
+        else:
+            raise TimeoutError
 
     print("Device is connected")
     polaris.ledGreenOn()
@@ -228,14 +232,19 @@ try:
     # if not registered, register device to Fortebit Cloud
     if not cloud.isRegistered(device, email):
         sfw.kick()
-        print("Device is not registered, register device")
-        while not cloud.register(device, email):
-            sfw.kick()
-            sleep(1000)
-        sfw.kick()
-        while not cloud.isRegistered(device, email):
-            sfw.kick()
-            sleep(1000)
+        retry = timers.now()
+        print("Device is not registered, register device...")
+        while timers.now() - retry < 60000:
+            if cloud.register(device, email):
+                sfw.kick()
+                if cloud.isRegistered(device, email):
+                    break
+            if not device.is_connected():
+                raise ConnectionError
+            sleep(5000)
+            print("Retry device registration...")
+        else:
+            raise TimeoutError
 
     sfw.kick()
     print("Device is registered")
