@@ -5,6 +5,7 @@ import timers
 import streams
 import json
 from fortebit.polaris import polaris
+from fortebit.polaris import qspiflash
 import accel
 
 modem = None
@@ -156,14 +157,14 @@ def validate_email(email):
 
 def saveSettings(settings):
     if has_qspi:
-        my_flash = polaris.QSpiFlash()
+        my_flash = qspiflash.QSpiFlash()
         my_flash.erase_block(0)
         my_flash[0] = json.dumps(settings) + "\n"
 
 
 def readSettings():
     if has_qspi:
-        my_flash = polaris.QSpiFlash()
+        my_flash = qspiflash.QSpiFlash()
         data = my_flash.read_data(0, 128)
         if not data.find("\n") < 0:
             return json.loads(data[0:data.find("\n")])
@@ -174,7 +175,7 @@ def readSettings():
 
 
 def eraseSettings():
-    my_flash = polaris.QSpiFlash()
+    my_flash = qspiflash.QSpiFlash()
     my_flash.erase_block(0)
 
 

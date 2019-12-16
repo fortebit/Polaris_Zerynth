@@ -1,9 +1,9 @@
 import threading
 import math
-from fortebit.polaris import polaris
+from fortebit.polaris import accelerometer as accel
 
 _lock = threading.Lock()
-_accel = polaris.Accelerometer()
+_accel = accel.Accelerometer()
 _thread = None
 
 _ACCEL_LP_COEF = 0.25
